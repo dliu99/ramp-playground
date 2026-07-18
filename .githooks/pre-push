@@ -1,5 +1,5 @@
 #!/bin/sh
 
-# Git supplies ref updates on stdin. exec preserves both stdin and the CLI's
-# exit code so rejecting the confirmation rejects the push.
-exec bun src/cli.ts "$@"
+# Git supplies ref updates on stdin. The runner opens the local web review and
+# returns its result, preserving the hook's exit code.
+exec bun src/pre-push.ts "$@"

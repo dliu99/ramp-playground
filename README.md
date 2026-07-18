@@ -1,66 +1,61 @@
-# PR Understanding Quiz Hook
+# PR Review Room
 
-A minimal local pre-push checkpoint built with Bun. It summarizes the refs being pushed and asks the author to confirm before Git sends them to the remote.
+A local, web-only pre-push checkpoint for understanding a change before opening its pull request. The Git hook opens a minimal Next.js review room; there is no terminal quiz.
 
-This scaffold intentionally contains no AI, quiz, scoring, game, or web logic yet.
+The flow has four steps:
 
-## Prerequisite
+1. Rebuild the changed system path in **Flow Fixer**.
+2. Replay commits and inspect the final behavioral/semantic diff in **Before / After**.
+3. Learn service ownership in **Service Shuffle**.
+4. Write the PR description and revise it against model feedback until it is ready.
 
-Install [Bun](https://bun.sh/) and verify it is available as `bun` in your shell.
+## Setup
 
-## Install
+Install [Bun](https://bun.sh/), then:
 
 ```sh
 bun install
 bun run hooks:install
 ```
 
-Installation sets this checkout's `core.hooksPath` to `.githooks`. Git will invoke the checkpoint on subsequent pushes from this worktree.
-
-## Use
-
-Push normally:
+Run the review room without pushing:
 
 ```sh
-git push
+bun run dev
 ```
 
-The hook shows the pushed branch, SHAs, commit count, and changed-file summary, then asks:
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Without a session token the page uses the current branch as a demo session.
 
-```text
-Continue push? [Y/n]
-```
+## Pre-push flow
 
-Press Enter or answer `y` to continue. Any other answer or Ctrl-C cancels the push.
+Push normally. The hook collects the pushed refs and read-only Git metadata, creates a file under `.context/pr-sessions`, starts the local Next.js app, and opens the session in the browser. The push waits for **build draft PR** or **cancel** in the page.
 
-To exercise the CLI without pushing, provide a pre-push ref line on stdin:
-
-```sh
-printf 'refs/heads/example <local-sha> refs/heads/example <remote-sha>\n' | bun run quiz
-```
-
-Piped input is non-interactive, so the CLI prints its summary and safely allows the operation instead of waiting for an answer.
-
-## Bypass
-
-Local Git hooks are advisory and can always be bypassed. This project makes the escape hatch explicit:
+Operational failures and a 30-minute timeout fail open so the hook cannot strand the developer. An explicit cancel fails closed. The intentional escape hatch remains:
 
 ```sh
 PR_QUIZ_BYPASS=1 git push
 ```
 
-Malformed hook input, unavailable Git summary information, or a non-interactive environment also fail open with a warning.
+## Model feedback
 
-## Uninstall
+Set `OPENAI_API_KEY` to judge PR-description revisions with the OpenAI Responses API. The model receives only the session summary (commits, changed-file paths, system flow, semantic diff) and the submitted draft—not full repository contents.
 
 ```sh
-bun run hooks:uninstall
+OPENAI_API_KEY=... bun run dev
 ```
 
-The command removes `core.hooksPath` only if it still equals `.githooks`, preserving any later user configuration.
+Use `OPENAI_MODEL` to override the default `gpt-5-mini`. Without a key, the same endpoint uses a small local rubric so the complete interaction remains testable.
 
-## Development
+## Keyboard
+
+- `1`—`4`: jump between steps
+- `←` / `→`: move between steps or commits
+- `space`: flip a service card
+- `⌘` + `enter`: judge a PR-description revision
+
+## Validate
 
 ```sh
 bun run typecheck
+bun run build
 ```
