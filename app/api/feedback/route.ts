@@ -13,7 +13,7 @@ interface DraftFeedback {
   feedback: string;
   missing: string[];
   suggestedDraft: string;
-  source: "openai" | "local";
+  source: "grok" | "local";
 }
 
 function localFeedback(draft: string): DraftFeedback {
@@ -46,8 +46,29 @@ function extractOutputText(payload: unknown): string | undefined {
   return response.output?.flatMap((item) => item.content ?? []).find((item) => item.type === "output_text")?.text;
 }
 
+function parseModelFeedback(output: string): Omit<DraftFeedback, "source"> | undefined {
+  try {
+    const parsed = JSON.parse(output.replace(/^```json\s*|\s*```$/g, "")) as Partial<Omit<DraftFeedback, "source">>;
+    const score = parsed.score;
+    if (
+      typeof parsed.ready !== "boolean" ||
+      typeof score !== "number" ||
+      !Number.isInteger(score) ||
+      score < 0 ||
+      score > 4 ||
+      typeof parsed.feedback !== "string" ||
+      !Array.isArray(parsed.missing) ||
+      !parsed.missing.every((item) => typeof item === "string") ||
+      typeof parsed.suggestedDraft !== "string"
+    ) return undefined;
+    return parsed as Omit<DraftFeedback, "source">;
+  } catch {
+    return undefined;
+  }
+}
+
 async function modelFeedback(body: FeedbackRequest): Promise<DraftFeedback | undefined> {
-  if (!process.env.OPENAI_API_KEY || !body.session || !body.draft) return undefined;
+  if (!process.env.XAI_API_KEY || !body.session || !body.draft) return undefined;
   const prompt = {
     branch: body.session.branch,
     commits: body.session.commits,
@@ -57,27 +78,25 @@ async function modelFeedback(body: FeedbackRequest): Promise<DraftFeedback | und
     authorDraft: body.draft,
     revision: body.revision ?? 1,
   };
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetch("https://api.x.ai/v1/responses", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      Authorization: `Bearer ${process.env.XAI_API_KEY}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-5-mini",
+      model: process.env.XAI_MODEL ?? "grok-4.5",
       instructions: "Judge whether a PR author understands the behavioral change and its wider system flow. Return only JSON with keys ready (boolean), score (integer 0-4), feedback (concise string), missing (string array), suggestedDraft (lightly edited markdown). Never invent implementation details.",
       input: JSON.stringify(prompt),
+      store: false,
+      prompt_cache_key: body.session.id,
     }),
   });
   if (!response.ok) return undefined;
   const output = extractOutputText(await response.json());
   if (!output) return undefined;
-  try {
-    const parsed = JSON.parse(output.replace(/^```json\s*|\s*```$/g, "")) as Omit<DraftFeedback, "source">;
-    return { ...parsed, source: "openai" };
-  } catch {
-    return undefined;
-  }
+  const parsed = parseModelFeedback(output);
+  return parsed ? { ...parsed, source: "grok" } : undefined;
 }
 
 export async function POST(request: Request) {
