@@ -12,6 +12,24 @@ const flowPrimitiveSchema = z.object({
   nodes: z.array(flowNodeSchema).min(2).max(6),
 }).strict();
 
+const diagramPrimitiveSchema = z.object({
+  type: z.literal("diagram"),
+  title: z.string().min(1).max(80),
+  nodes: z.array(flowNodeSchema).min(2).max(8),
+  edges: z.array(z.object({
+    from: z.string().min(1),
+    to: z.string().min(1),
+    label: z.string().max(48).optional(),
+  }).strict()).min(1).max(12),
+}).strict().superRefine((diagram, context) => {
+  const ids = new Set(diagram.nodes.map((node) => node.id));
+  for (const edge of diagram.edges) {
+    if (!ids.has(edge.from) || !ids.has(edge.to)) {
+      context.addIssue({ code: "custom", message: "Diagram edges must reference existing node ids" });
+    }
+  }
+});
+
 const changeFrameSchema = z.object({
   sha: z.string().min(1).max(12),
   title: z.string().min(1).max(120),
@@ -45,6 +63,7 @@ const draftPrimitiveSchema = z.object({
 
 export const quizPrimitiveSchema = z.discriminatedUnion("type", [
   flowPrimitiveSchema,
+  diagramPrimitiveSchema,
   changesPrimitiveSchema,
   servicesPrimitiveSchema,
   draftPrimitiveSchema,
@@ -53,7 +72,7 @@ export const quizPrimitiveSchema = z.discriminatedUnion("type", [
 export const quizPlanSchema = z.object({
   shouldQuiz: z.boolean(),
   reason: z.string().max(240),
-  primitives: z.array(quizPrimitiveSchema).max(4),
+  primitives: z.array(quizPrimitiveSchema).max(5),
 }).strict().superRefine((plan, context) => {
   if (plan.shouldQuiz !== (plan.primitives.length > 0)) {
     context.addIssue({ code: "custom", message: "shouldQuiz must match whether primitives are present" });
@@ -104,9 +123,14 @@ export async function generateQuizPlan(session: ReviewSession): Promise<QuizPlan
       store: false,
       instructions: [
         "Decide whether this pushed diff merits a short learning checkpoint for its author.",
-        "Choose only the quiz primitives that teach a concrete mental model; an empty plan is valid for trivial changes.",
-        "All primitive content must be grounded in the supplied diff. Never invent services, paths, behavior, or control flow.",
-        "Order primitives from concrete recall toward synthesis. Keep cards concise.",
+        "Teach the high-level product and system mental model, not implementation trivia.",
+        "Prefer questions such as what experience a route opens, which major technology or subsystem owns it, what the user can do, and how the main pieces connect.",
+        "Mention a file or code-level detail only when it genuinely helps the author navigate the system; avoid identifiers, helper internals, and line-level recall.",
+        "Choose only the primitives that teach a concrete mental model; an empty plan is valid for trivial changes.",
+        "For a flow, choose the number of cards that best expresses the real sequence (2 to 6); do not pad it to a fixed count.",
+        "Use a diagram when relationships are more useful than an ordered recall exercise.",
+        "All content must be grounded in the supplied diff. Never invent services, paths, behavior, or control flow.",
+        "Order primitives from broad orientation toward synthesis. Keep labels concise and details semantic.",
       ].join(" "),
       input: JSON.stringify({
         branch: session.branch,
