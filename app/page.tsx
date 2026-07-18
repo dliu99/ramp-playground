@@ -15,6 +15,7 @@ function prUrl(session: ClientSession, draft: string): string {
 
 export default function ReviewRoom() {
   const [session, setSession] = useState<ClientSession>();
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [primitiveIndex, setPrimitiveIndex] = useState(0);
   const [flowOrder, setFlowOrder] = useState<string[]>([]);
   const [changeIndex, setChangeIndex] = useState(0);
@@ -31,6 +32,13 @@ export default function ReviewRoom() {
       .then((response) => response.json())
       .then(setSession);
   }, []);
+
+  useEffect(() => {
+    if (session) return;
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setLoadingSeconds(Math.floor((Date.now() - startedAt) / 1000)), 250);
+    return () => window.clearInterval(timer);
+  }, [session]);
 
   const primitive = session?.quizPlan.primitives[primitiveIndex];
   const shuffledFlow = useMemo(() => {
@@ -125,7 +133,8 @@ export default function ReviewRoom() {
     return () => window.removeEventListener("keydown", onKey);
   }, [addFlow, finish, judgeDraft, primitive, serviceReveal, shuffledFlow]);
 
-  if (!session || !primitive) return <main className="loading"><span>_</span></main>;
+  if (!session) return <LoadingScreen seconds={loadingSeconds} />;
+  if (!primitive) return <main className="loading"><p>Nothing substantial to quiz — continuing…</p></main>;
 
   return (
     <main className="shell">
@@ -146,6 +155,8 @@ export default function ReviewRoom() {
         select={setChangeIndex}
         advance={() => changeIndex === primitive.frames.length - 1 ? nextPrimitive() : setChangeIndex((value) => value + 1)}
       />}
+
+      {primitive.type === "diagram" && <DiagramPrimitive primitive={primitive} advance={nextPrimitive} />}
 
       {primitive.type === "services" && <ServicesPrimitive
         primitive={primitive}
@@ -172,6 +183,23 @@ export default function ReviewRoom() {
   );
 }
 
+function LoadingScreen({ seconds }: { seconds: number }) {
+  const stages = [
+    "Reading the pushed change",
+    "Mapping the user-visible behavior",
+    "Choosing useful recall prompts",
+    "Building the learning flow",
+  ];
+  const active = Math.floor(seconds / 2) % stages.length;
+  return <main className="loading">
+    <div className="loading-panel" aria-live="polite">
+      <div className="loading-heading"><span className="spinner">◇</span><strong>Generating your review</strong><time>{seconds}s</time></div>
+      <div className="loading-trace">{stages.map((stage, index) => <p key={stage} className={index === active ? "active" : "pending"}><span>{index === active ? "→" : "·"}</span>{stage}</p>)}</div>
+      <small>Generation time depends on the size of the change.</small>
+    </div>
+  </main>;
+}
+
 function Advance({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
   return <button className="advance" aria-label="Continue" disabled={disabled} onClick={onClick}>→</button>;
 }
@@ -185,13 +213,28 @@ function FlowPrimitive({ primitive, shuffled, order, add, undo, advance }: {
   advance: () => void;
 }) {
   const correct = order.length === primitive.nodes.length && order.every((id, index) => id === primitive.nodes[index]?.id);
+  const attempted = order.length === primitive.nodes.length;
   return <section className="primitive flow-primitive">
+    <header className="primitive-heading"><div><small>ORDER THE FLOW</small><h1>What happens, from start to finish?</h1></div><p>Select the cards in order. Build steps <b>1–{primitive.nodes.length}</b>, then check your result.</p></header>
     <div className="flow-row">{primitive.nodes.map((_, index) => {
       const node = primitive.nodes.find((item) => item.id === order[index]);
-      return <button aria-label={`Flow position ${index + 1}`} key={index} className={node ? "flow-slot filled" : "flow-slot"} onClick={() => node && undo(index)}>{node && <><strong>{node.label}</strong><span>{node.detail}</span></>}</button>;
+      return <button aria-label={`Flow position ${index + 1}`} key={index} className={node ? "flow-slot filled" : "flow-slot"} onClick={() => node && undo(index)}><i>{index + 1}</i>{node && <><strong>{node.label}</strong><span>{node.detail}</span></>}</button>;
     })}</div>
     <div className="tray">{shuffled.map((node, index) => <button key={node.id} disabled={order.includes(node.id)} onClick={() => add(node.id)}><kbd>{index + 1}</kbd><strong>{node.label}</strong><span>{node.detail}</span></button>)}</div>
+    <div className={`flow-result ${attempted ? correct ? "correct" : "incorrect" : ""}`} role="status">{attempted ? correct ? "✓ Correct — that’s the flow." : "× Not quite. Click a placed card to retry from that step." : `${order.length} of ${primitive.nodes.length} steps placed`}</div>
     <Advance disabled={!correct} onClick={advance} />
+  </section>;
+}
+
+function DiagramPrimitive({ primitive, advance }: {
+  primitive: Extract<QuizPrimitive, { type: "diagram" }>;
+  advance: () => void;
+}) {
+  return <section className="primitive diagram-primitive">
+    <header className="primitive-heading"><div><small>SYSTEM MAP</small><h1>{primitive.title}</h1></div><p>A high-level map of the parts and relationships in this change.</p></header>
+    <div className="diagram-grid">{primitive.nodes.map((node, index) => <article key={node.id} style={{ gridColumn: `${index % 3 + 1}`, gridRow: `${Math.floor(index / 3) * 2 + 1}` }}><small>{node.id}</small><strong>{node.label}</strong><span>{node.detail}</span></article>)}</div>
+    <div className="diagram-edges">{primitive.edges.map((edge, index) => <div key={`${edge.from}:${edge.to}:${index}`}><b>{edge.from}</b><span>→</span>{edge.label && <em>{edge.label}</em>}<b>{edge.to}</b></div>)}</div>
+    <Advance onClick={advance} />
   </section>;
 }
 

@@ -8,6 +8,7 @@
     "dev": "next dev --hostname 127.0.0.1",
     "build": "next build",
     "start": "next start --hostname 127.0.0.1",
+    "sample": "bun run src/sample.ts",
     "review": "bun run src/pre-push.ts",
     "typecheck": "tsc --noEmit"
   },

@@ -5,9 +5,10 @@ A local, web-only pre-push checkpoint for understanding a change before opening 
 The pushed diff is sent to Grok 4.5. The model decides whether the change merits a quiz, selects only the useful primitives, and supplies their content through a Zod-validated Structured Output. Available primitives are:
 
 1. Reorder a changed system flow.
-2. Replay behavioral changes across commits.
-3. Recall component or service ownership with cards.
-4. Teach the change back in a PR draft.
+2. Review a validated system map of nodes and relationships.
+3. Replay behavioral changes across commits.
+4. Recall component or service ownership with cards.
+5. Teach the change back in a PR draft.
 
 The model may return any subset in any order. Trivial changes and generation failures return no primitives and allow the push to continue. The raw diff is used server-side for generation and is not returned to the browser.
 
@@ -23,10 +24,20 @@ bun run hooks:install
 Run the review room without pushing:
 
 ```sh
-bun run dev
+bun run sample
 ```
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000). Without a session token the page uses the current branch as a demo session.
+This loads your real `try-caddy/caddy` PR #3000 through the GitHub CLI and sends its patch through the same saved-session API used by the pre-push hook. With `XAI_API_KEY` set, the model generates a new quiz from the PR diff. Without a key, a built-in validated quiz for that PR lets you exercise the representative UI states. Press `Ctrl+C` when finished.
+
+Pass another PR number to sample a different Caddy change (model credentials are required to generate its quiz):
+
+```sh
+bun run sample -- 2988
+```
+
+Override `SAMPLE_REPO` to use a PR from another repository.
+
+For the current Git branch demo instead, run `bun run dev` and open [http://127.0.0.1:3000](http://127.0.0.1:3000).
 
 ## Pre-push flow
 
