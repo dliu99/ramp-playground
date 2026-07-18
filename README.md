@@ -36,15 +36,15 @@ Operational failures and a 30-minute timeout fail open so the hook cannot strand
 PR_QUIZ_BYPASS=1 git push
 ```
 
-## Model feedback
+## Grok 4.5 feedback
 
-Set `OPENAI_API_KEY` to judge PR-description revisions with the OpenAI Responses API. The model receives only the session summary (commits, changed-file paths, system flow, semantic diff) and the submitted draft—not full repository contents.
+Set `XAI_API_KEY` to judge PR-description revisions with Grok 4.5 through xAI's Responses API. The model receives only the session summary (commits, changed-file paths, system flow, semantic diff) and the submitted draft—not full repository contents. Requests set `store: false`, so xAI is not asked to retain the review response.
 
 ```sh
-OPENAI_API_KEY=... bun run dev
+XAI_API_KEY=... bun run dev
 ```
 
-Use `OPENAI_MODEL` to override the default `gpt-5-mini`. Without a key, the same endpoint uses a small local rubric so the complete interaction remains testable.
+The default model is `grok-4.5`; use `XAI_MODEL` to override it. Without a key, the same endpoint uses a small local rubric so the complete interaction remains testable.
 
 ## Keyboard
 

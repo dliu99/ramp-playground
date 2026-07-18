@@ -170,7 +170,7 @@ export default function ReviewRoom() {
           </div>
           <aside className="judge">
             <span>LLM REVIEW · REV {revision || "—"}</span>
-            {!feedback ? <p className="muted">Submit a draft. Feedback checks behavior, repo context, flow, and verification.</p> : <><div className="score"><strong>{feedback.score}</strong><small>/4</small><em>{feedback.ready ? "READY" : "REVISE"}</em></div><p>{feedback.feedback}</p>{feedback.missing.map((item) => <li key={item}>→ {item}</li>)}<small>{feedback.source === "openai" ? "model review" : "local rubric · set OPENAI_API_KEY for model review"}</small></>}
+            {!feedback ? <p className="muted">Submit a draft. Feedback checks behavior, repo context, flow, and verification.</p> : <><div className="score"><strong>{feedback.score}</strong><small>/4</small><em>{feedback.ready ? "READY" : "REVISE"}</em></div><p>{feedback.feedback}</p>{feedback.missing.map((item) => <li key={item}>→ {item}</li>)}<small>{feedback.source === "grok" ? "Grok 4.5 review" : "local rubric · set XAI_API_KEY for Grok review"}</small></>}
             <button disabled={!draft.trim() || judging} onClick={() => void judgeDraft()}>[{judging ? "judging…" : revision ? "judge revision" : "judge draft"}]</button>
             <button className="build" disabled={!feedback?.ready} onClick={() => void finish("approved")}>[build draft pr ↗]</button>
           </aside>
