@@ -29,3 +29,11 @@ export async function setSessionStatus(id: string, status: SessionStatus): Promi
   await saveSession(session);
   return session;
 }
+
+export async function setSessionQuizPlan(id: string, quizPlan: ReviewSession["quizPlan"]): Promise<ReviewSession | undefined> {
+  const session = await readSession(id);
+  if (!session) return undefined;
+  session.quizPlan = quizPlan;
+  await saveSession(session);
+  return session;
+}

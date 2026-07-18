@@ -1,30 +1,23 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { QuizPlan, QuizPrimitive } from "../src/quiz-plan";
 import type { ReviewSession } from "../src/review-session";
 
-type Step = "flow" | "changes" | "services" | "draft";
-type Feedback = { ready: boolean; score: number; feedback: string; missing: string[]; suggestedDraft: string; source: string };
+type ClientSession = Omit<ReviewSession, "diff" | "quizPlan"> & { quizPlan: QuizPlan };
+type Feedback = { ready: boolean; score: number; feedback: string; missing: string[]; suggestedDraft: string };
 
-const steps: Array<{ id: Step; label: string; key: string }> = [
-  { id: "flow", label: "flow fixer", key: "1" },
-  { id: "changes", label: "before / after", key: "2" },
-  { id: "services", label: "service shuffle", key: "3" },
-  { id: "draft", label: "write the pr", key: "4" },
-];
-
-function prUrl(session: ReviewSession, draft: string): string {
+function prUrl(session: ClientSession, draft: string): string {
   const root = session.remoteUrl?.includes("github.com") ? `https://github.com/${session.repo}` : "https://github.com";
   const title = session.commits.at(-1)?.title ?? session.branch;
   return `${root}/compare/${encodeURIComponent(session.baseBranch)}...${encodeURIComponent(session.branch)}?expand=1&draft=1&title=${encodeURIComponent(title)}&body=${encodeURIComponent(draft)}`;
 }
 
 export default function ReviewRoom() {
-  const [session, setSession] = useState<ReviewSession>();
-  const [step, setStep] = useState<Step>("flow");
-  const [complete, setComplete] = useState<Set<Step>>(new Set());
+  const [session, setSession] = useState<ClientSession>();
+  const [primitiveIndex, setPrimitiveIndex] = useState(0);
   const [flowOrder, setFlowOrder] = useState<string[]>([]);
-  const [commitIndex, setCommitIndex] = useState(0);
+  const [changeIndex, setChangeIndex] = useState(0);
   const [serviceIndex, setServiceIndex] = useState(0);
   const [serviceReveal, setServiceReveal] = useState(false);
   const [draft, setDraft] = useState("");
@@ -39,60 +32,49 @@ export default function ReviewRoom() {
       .then(setSession);
   }, []);
 
-  const markComplete = useCallback((value: Step) => {
-    setComplete((current) => new Set([...current, value]));
-  }, []);
+  const primitive = session?.quizPlan.primitives[primitiveIndex];
+  const shuffledFlow = useMemo(() => {
+    if (primitive?.type !== "flow") return [];
+    return primitive.nodes.length > 2
+      ? [...primitive.nodes.slice(2), ...primitive.nodes.slice(0, 2)]
+      : [...primitive.nodes].reverse();
+  }, [primitive]);
 
-  const go = useCallback((direction: number) => {
-    const index = steps.findIndex((item) => item.id === step);
-    setStep(steps[Math.max(0, Math.min(steps.length - 1, index + direction))]!.id);
-  }, [step]);
+  const finish = useCallback(async (status: "approved" | "cancelled") => {
+    if (!session) return;
+    const id = new URLSearchParams(window.location.search).get("session");
+    if (id) {
+      await fetch("/api/session", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id, status }),
+      });
+    }
+    if (status === "approved") window.open(prUrl(session, feedback?.suggestedDraft || draft), "_blank", "noopener,noreferrer");
+  }, [draft, feedback, session]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.target as HTMLElement).matches("textarea, input")) {
-        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void judgeDraft();
-        return;
-      }
-      const direct = steps.find((item) => item.key === event.key);
-      if (direct) setStep(direct.id);
-      if (event.key === "Escape") void finish("cancelled");
-      if (event.key === "r" && step === "flow") resetFlow();
-      if (event.key === "ArrowLeft") {
-        if (step === "changes") setCommitIndex((value) => Math.max(0, value - 1));
-        else if (step === "services") { setServiceIndex((value) => Math.max(0, value - 1)); setServiceReveal(false); }
-        else go(-1);
-      }
-      if (event.key === "ArrowRight") {
-        if (step === "changes") setCommitIndex((value) => Math.min(Math.max(0, (session?.commits.length ?? 1) - 1), value + 1));
-        else if (step === "services") { setServiceIndex((value) => Math.min((session?.services.length ?? 1) - 1, value + 1)); setServiceReveal(false); }
-        else go(1);
-      }
-      if (event.key === " " && step === "services") {
-        event.preventDefault();
-        setServiceReveal((value) => !value);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  });
+    if (!session || session.quizPlan.primitives.length > 0) return;
+    const id = new URLSearchParams(window.location.search).get("session");
+    if (id) void fetch("/api/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, status: "approved" }),
+    });
+  }, [session]);
 
-  const shuffledFlow = useMemo(() => session ? [session.flow[2], session.flow[0], session.flow[3], session.flow[1]].filter(Boolean) : [], [session]);
-  if (!session) return <main className="loading">opening review room<span>_</span></main>;
+  const nextPrimitive = useCallback(() => {
+    if (!session) return;
+    if (primitiveIndex === session.quizPlan.primitives.length - 1) void finish("approved");
+    else setPrimitiveIndex((value) => value + 1);
+  }, [finish, primitiveIndex, session]);
 
-  function addFlow(id: string) {
-    if (flowOrder.includes(id)) return;
-    const next = [...flowOrder, id];
-    setFlowOrder(next);
-    if (next.length === session!.flow.length && next.every((value, index) => value === session!.flow[index]!.id)) markComplete("flow");
-  }
+  const addFlow = useCallback((id: string) => {
+    setFlowOrder((current) => current.includes(id) ? current : [...current, id]);
+  }, []);
 
-  function resetFlow() {
-    setFlowOrder([]);
-  }
-
-  async function judgeDraft() {
-    if (!draft.trim() || judging) return;
+  const judgeDraft = useCallback(async () => {
+    if (!draft.trim() || judging || !session) return;
     setJudging(true);
     const response = await fetch("/api/feedback", {
       method: "POST",
@@ -102,82 +84,168 @@ export default function ReviewRoom() {
     const result = await response.json() as Feedback;
     setRevision((value) => value + 1);
     setFeedback(result);
-    if (result.ready) markComplete("draft");
     setJudging(false);
-  }
+  }, [draft, judging, revision, session]);
 
-  async function finish(status: "approved" | "cancelled") {
-    const id = new URLSearchParams(window.location.search).get("session");
-    if (id) {
-      await fetch("/api/session", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, status }) });
-    }
-    if (status === "approved") window.open(prUrl(session!, feedback?.suggestedDraft || draft), "_blank", "noopener,noreferrer");
-  }
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const editing = (event.target as HTMLElement).matches("textarea, input");
+      if (editing) {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void judgeDraft();
+        return;
+      }
+      if (event.key === "Escape") void finish("cancelled");
+      const number = Number(event.key) - 1;
+      if (number >= 0 && primitive) {
+        if (primitive.type === "flow") {
+          const node = shuffledFlow[number];
+          if (node) addFlow(node.id);
+        }
+        if (primitive.type === "changes" && number < primitive.frames.length) setChangeIndex(number);
+        if (primitive.type === "services" && number < primitive.cards.length) {
+          setServiceIndex(number);
+          setServiceReveal(false);
+        }
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+        event.preventDefault();
+        if (primitive?.type === "flow") setFlowOrder((value) => value.slice(0, -1));
+        if (primitive?.type === "changes") setChangeIndex((value) => Math.max(0, value - 1));
+        if (primitive?.type === "services") {
+          if (serviceReveal) setServiceReveal(false);
+          else setServiceIndex((value) => Math.max(0, value - 1));
+        }
+      }
+      if (event.key === " " && primitive?.type === "services") {
+        event.preventDefault();
+        setServiceReveal((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [addFlow, finish, judgeDraft, primitive, serviceReveal, shuffledFlow]);
 
-  const lastCommit = Math.max(0, session.commits.length - 1);
-  const shownCommit = session.commits[commitIndex] ?? session.commits[0]!;
-  const shownService = session.services[serviceIndex]!;
+  if (!session || !primitive) return <main className="loading"><span>_</span></main>;
 
   return (
     <main className="shell">
-      <header>
-        <div className="identity"><span>PR REVIEW</span><strong>{session.repo}</strong><i>/</i><strong>{session.branch}</strong></div>
-        <div className="meta"><span>{session.commits.length} commits</span><span>{session.changedFiles.length} files</span><button onClick={() => void finish("cancelled")}>[esc cancel]</button></div>
-      </header>
+      <button className="cancel" aria-label="Cancel review" title="Cancel (Esc)" onClick={() => void finish("cancelled")}>×</button>
 
-      <nav aria-label="Review steps">
-        {steps.map((item, index) => <button key={item.id} className={step === item.id ? "active" : ""} onClick={() => setStep(item.id)}><kbd>{item.key}</kbd>{item.label}<em>{complete.has(item.id) ? "✓" : String(index + 1).padStart(2, "0")}</em></button>)}
-      </nav>
+      {primitive.type === "flow" && <FlowPrimitive
+        primitive={primitive}
+        shuffled={shuffledFlow}
+        order={flowOrder}
+        add={addFlow}
+        undo={(index) => setFlowOrder(flowOrder.slice(0, index))}
+        advance={nextPrimitive}
+      />}
 
-      <section className="stage">
-        {step === "flow" && <div className="panel flow-panel">
-          <div className="prompt"><span>01 / FLOW FIXER</span><h1>Put the write path in order.</h1><p>click cards or use drag order · click placed cards to undo</p></div>
-          <div className="flow-row">
-            {session.flow.map((_, index) => {
-              const id = flowOrder[index];
-              const node = session.flow.find((item) => item.id === id);
-              return <button key={index} className={node ? "flow-slot filled" : "flow-slot"} onClick={() => node && setFlowOrder(flowOrder.slice(0, index))}><small>0{index + 1}</small>{node ? <><strong>{node.label}</strong><span>{node.detail}</span></> : <em>empty</em>}</button>;
-            })}
-          </div>
-          <div className="tray">{shuffledFlow.map((node) => <button key={node.id} disabled={flowOrder.includes(node.id)} onClick={() => addFlow(node.id)}><strong>{node.label}</strong><span>{node.detail}</span></button>)}</div>
-          <div className="statusline"><span>{complete.has("flow") ? "+ REQUEST PATH RESTORED" : `${flowOrder.length}/${session.flow.length} placed`}</span><button onClick={resetFlow}>[r reset]</button><button disabled={!complete.has("flow")} onClick={() => setStep("changes")}>[→ next]</button></div>
-        </div>}
+      {primitive.type === "changes" && <ChangesPrimitive
+        primitive={primitive}
+        index={changeIndex}
+        select={setChangeIndex}
+        advance={() => changeIndex === primitive.frames.length - 1 ? nextPrimitive() : setChangeIndex((value) => value + 1)}
+      />}
 
-        {step === "changes" && <div className="panel change-panel">
-          <div className="prompt"><span>02 / BEFORE + AFTER</span><h1>Replay the behavioral change.</h1><p>one commit at a time · use ← →</p></div>
-          <div className="commit"><span>{shownCommit.sha}</span><strong>{shownCommit.title}</strong><em>{shownCommit.author} · {commitIndex + 1}/{session.commits.length}</em></div>
-          <div className="system-flow">{session.flow.map((node, index) => <div key={node.id} className={commitIndex >= Math.min(index, lastCommit) ? "lit" : ""}><small>{node.id}</small><strong>{node.label}</strong><span>{commitIndex === lastCommit ? node.detail : index === 0 ? "creates company category rule" : index === 3 ? "checks category" : "unchanged"}</span></div>)}</div>
-          {commitIndex === lastCommit && <div className="semantic"><span>BEHAVIORAL / SEMANTIC DIFF</span>{session.behavioralDiff.map((row) => <div key={row.before}><p><b>− BEFORE</b>{row.before}</p><p><b>+ AFTER</b>{row.after}</p></div>)}</div>}
-          <div className="statusline"><button disabled={commitIndex === 0} onClick={() => setCommitIndex((value) => value - 1)}>[← previous]</button><span>{"·".repeat(commitIndex + 1)}{"○".repeat(lastCommit - commitIndex)}</span><button onClick={() => { if (commitIndex === lastCommit) { markComplete("changes"); setStep("services"); } else setCommitIndex((value) => value + 1); }}>{commitIndex === lastCommit ? "[understood →]" : "[next commit →]"}</button></div>
-        </div>}
+      {primitive.type === "services" && <ServicesPrimitive
+        primitive={primitive}
+        index={serviceIndex}
+        reveal={serviceReveal}
+        flip={() => setServiceReveal((value) => !value)}
+        select={(index) => { setServiceIndex(index); setServiceReveal(false); }}
+        advance={() => {
+          if (serviceIndex === primitive.cards.length - 1) nextPrimitive();
+          else { setServiceIndex((value) => value + 1); setServiceReveal(false); }
+        }}
+      />}
 
-        {step === "services" && <div className="panel service-panel">
-          <div className="prompt"><span>03 / SERVICE SHUFFLE</span><h1>Know who owns what.</h1><p>space flips · arrows move</p></div>
-          <div className={serviceReveal ? "service-card flipped" : "service-card"} onClick={() => setServiceReveal(!serviceReveal)}>
-            <div className="service-front"><small>SERVICE {serviceIndex + 1}/{session.services.length}</small><h2>{shownService.name}</h2><code>{shownService.path}</code><span>[space to reveal]</span></div>
-            <div className="service-back"><small>RESPONSIBILITY</small><p>{shownService.responsibility}</p><span>in this change</span></div>
-          </div>
-          <div className="service-index">{session.services.map((service, index) => <button key={service.name} className={index === serviceIndex ? "active" : ""} onClick={() => { setServiceIndex(index); setServiceReveal(false); }}><b>0{index + 1}</b>{service.name}</button>)}</div>
-          <div className="statusline"><span>{serviceIndex + 1}/{session.services.length} services</span><button onClick={() => { const next = (serviceIndex + 1) % session.services.length; setServiceIndex(next); setServiceReveal(false); if (next === 0) markComplete("services"); }}>[next card →]</button><button disabled={!complete.has("services")} onClick={() => setStep("draft")}>[write pr →]</button></div>
-        </div>}
-
-        {step === "draft" && <div className="panel draft-panel">
-          <div className="prompt"><span>04 / TEACH IT BACK</span><h1>Describe the flow in your own words.</h1><p>what changed · where it travels · how you know it works</p></div>
-          <div className="editor">
-            <div className="gutter">{String(revision + 1).padStart(2, "0")}</div>
-            <textarea autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={"## What changed\n\n## System flow\n\n## Verification / risk"} />
-            <div className="editor-meta"><span>{draft.length} chars</span><span>⌘↵ judge revision</span></div>
-          </div>
-          <aside className="judge">
-            <span>LLM REVIEW · REV {revision || "—"}</span>
-            {!feedback ? <p className="muted">Submit a draft. Feedback checks behavior, repo context, flow, and verification.</p> : <><div className="score"><strong>{feedback.score}</strong><small>/4</small><em>{feedback.ready ? "READY" : "REVISE"}</em></div><p>{feedback.feedback}</p>{feedback.missing.map((item) => <li key={item}>→ {item}</li>)}<small>{feedback.source === "grok" ? "Grok 4.5 review" : "local rubric · set XAI_API_KEY for Grok review"}</small></>}
-            <button disabled={!draft.trim() || judging} onClick={() => void judgeDraft()}>[{judging ? "judging…" : revision ? "judge revision" : "judge draft"}]</button>
-            <button className="build" disabled={!feedback?.ready} onClick={() => void finish("approved")}>[build draft pr ↗]</button>
-          </aside>
-        </div>}
-      </section>
-
-      <footer><span>← → navigate</span><span>1—4 jump</span><span>everything stays local until draft review</span></footer>
+      {primitive.type === "draft" && <DraftPrimitive
+        primitive={primitive}
+        draft={draft}
+        setDraft={setDraft}
+        feedback={feedback}
+        judging={judging}
+        judge={() => void judgeDraft()}
+        finish={() => void finish("approved")}
+      />}
     </main>
   );
+}
+
+function Advance({ disabled, onClick }: { disabled?: boolean; onClick: () => void }) {
+  return <button className="advance" aria-label="Continue" disabled={disabled} onClick={onClick}>→</button>;
+}
+
+function FlowPrimitive({ primitive, shuffled, order, add, undo, advance }: {
+  primitive: Extract<QuizPrimitive, { type: "flow" }>;
+  shuffled: Extract<QuizPrimitive, { type: "flow" }>["nodes"];
+  order: string[];
+  add: (id: string) => void;
+  undo: (index: number) => void;
+  advance: () => void;
+}) {
+  const correct = order.length === primitive.nodes.length && order.every((id, index) => id === primitive.nodes[index]?.id);
+  return <section className="primitive flow-primitive">
+    <div className="flow-row">{primitive.nodes.map((_, index) => {
+      const node = primitive.nodes.find((item) => item.id === order[index]);
+      return <button aria-label={`Flow position ${index + 1}`} key={index} className={node ? "flow-slot filled" : "flow-slot"} onClick={() => node && undo(index)}>{node && <><strong>{node.label}</strong><span>{node.detail}</span></>}</button>;
+    })}</div>
+    <div className="tray">{shuffled.map((node, index) => <button key={node.id} disabled={order.includes(node.id)} onClick={() => add(node.id)}><kbd>{index + 1}</kbd><strong>{node.label}</strong><span>{node.detail}</span></button>)}</div>
+    <Advance disabled={!correct} onClick={advance} />
+  </section>;
+}
+
+function ChangesPrimitive({ primitive, index, select, advance }: {
+  primitive: Extract<QuizPrimitive, { type: "changes" }>;
+  index: number;
+  select: (index: number) => void;
+  advance: () => void;
+}) {
+  const frame = primitive.frames[index] ?? primitive.frames[0]!;
+  return <section className="primitive changes-primitive">
+    <div className="commit"><kbd>{index + 1}</kbd><span>{frame.sha}</span><strong>{frame.title}</strong><em>{frame.author}</em></div>
+    <div className="system-flow">{frame.flow.map((node) => <div key={node.id}><small>{node.id}</small><strong>{node.label}</strong><span>{node.detail}</span></div>)}</div>
+    <div className="semantic">{frame.behavioralDiff.map((row) => <div key={`${row.before}:${row.after}`}><p><b>−</b>{row.before}</p><p><b>+</b>{row.after}</p></div>)}</div>
+    <div className="commit-index">{primitive.frames.map((item, itemIndex) => <button key={`${item.sha}:${itemIndex}`} className={itemIndex === index ? "active" : ""} onClick={() => select(itemIndex)}><kbd>{itemIndex + 1}</kbd>{item.sha}</button>)}</div>
+    <Advance onClick={advance} />
+  </section>;
+}
+
+function ServicesPrimitive({ primitive, index, reveal, flip, select, advance }: {
+  primitive: Extract<QuizPrimitive, { type: "services" }>;
+  index: number;
+  reveal: boolean;
+  flip: () => void;
+  select: (index: number) => void;
+  advance: () => void;
+}) {
+  const card = primitive.cards[index] ?? primitive.cards[0]!;
+  return <section className="primitive services-primitive">
+    <button className={reveal ? "service-card flipped" : "service-card"} onClick={flip}>
+      <span className="service-front"><kbd>{index + 1}</kbd><strong>{card.name}</strong><code>{card.path}</code></span>
+      <span className="service-back">{card.responsibility}</span>
+    </button>
+    <div className="service-index">{primitive.cards.map((item, itemIndex) => <button key={`${item.name}:${itemIndex}`} className={itemIndex === index ? "active" : ""} onClick={() => select(itemIndex)}><kbd>{itemIndex + 1}</kbd>{item.name}</button>)}</div>
+    <Advance onClick={advance} />
+  </section>;
+}
+
+function DraftPrimitive({ primitive, draft, setDraft, feedback, judging, judge, finish }: {
+  primitive: Extract<QuizPrimitive, { type: "draft" }>;
+  draft: string;
+  setDraft: (draft: string) => void;
+  feedback?: Feedback;
+  judging: boolean;
+  judge: () => void;
+  finish: () => void;
+}) {
+  const placeholder = primitive.sections.map((section) => `## ${section}`).join("\n\n");
+  return <section className="primitive draft-primitive">
+    <textarea autoFocus value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={placeholder} />
+    <aside className="judge">
+      {feedback && <><div className="score"><strong>{feedback.score}</strong><small>/4</small><em>{feedback.ready ? "READY" : "REVISE"}</em></div><p>{feedback.feedback}</p>{feedback.missing.map((item) => <li key={item}>→ {item}</li>)}</>}
+      <button disabled={!draft.trim() || judging} onClick={judge}>{judging ? "…" : "judge"}</button>
+      <button className="build" disabled={!feedback?.ready} onClick={finish}>open pr ↗</button>
+    </aside>
+  </section>;
 }

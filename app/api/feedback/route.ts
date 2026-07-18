@@ -17,23 +17,11 @@ interface DraftFeedback {
 }
 
 function localFeedback(draft: string): DraftFeedback {
-  const checks = [
-    { ok: /card|employee/i.test(draft), label: "name the user-visible behavior" },
-    { ok: /api|persist|store|rule/i.test(draft), label: "trace how the rule is stored" },
-    { ok: /policy|evaluat|category/i.test(draft), label: "explain the authorization path" },
-    { ok: /test|risk|verify|edge/i.test(draft), label: "state verification or remaining risk" },
-  ];
-  const missing = checks.filter((check) => !check.ok).map((check) => check.label);
-  const score = checks.length - missing.length;
   return {
-    ready: score >= 4 && draft.trim().length >= 180,
-    score,
-    feedback: missing.length
-      ? `Good skeleton. Next revision: ${missing.join("; ")}.`
-      : draft.trim().length < 180
-        ? "The flow is accurate. Add one concrete example or verification detail before shipping."
-        : "Ready. The description covers behavior, system flow, and verification without narrating implementation trivia.",
-    missing,
+    ready: true,
+    score: 0,
+    feedback: "Model review is unavailable. Continue without blocking the push.",
+    missing: [],
     suggestedDraft: draft.trim(),
     source: "local",
   };
@@ -73,8 +61,7 @@ async function modelFeedback(body: FeedbackRequest): Promise<DraftFeedback | und
     branch: body.session.branch,
     commits: body.session.commits,
     changedFiles: body.session.changedFiles,
-    behavioralDiff: body.session.behavioralDiff,
-    systemFlow: body.session.flow,
+    quizPlan: body.session.quizPlan,
     authorDraft: body.draft,
     revision: body.revision ?? 1,
   };
