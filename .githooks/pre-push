@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Git supplies ref updates on stdin. exec preserves both stdin and the CLI's
+# exit code so rejecting the confirmation rejects the push.
+exec bun src/cli.ts "$@"
