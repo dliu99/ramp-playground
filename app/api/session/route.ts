@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { demoSession } from "../../../src/review-session";
-import { readSession, setSessionStatus } from "../../../src/session-store";
+import { generateQuizPlan } from "../../../src/quiz-plan";
+import { readSession, setSessionQuizPlan, setSessionStatus } from "../../../src/session-store";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
   const id = request.nextUrl.searchParams.get("id");
-  const session = id ? await readSession(id) : demoSession();
-  return session
-    ? NextResponse.json(session)
-    : NextResponse.json({ error: "Session not found" }, { status: 404 });
+  let session = id ? await readSession(id) : demoSession();
+  if (!session) return NextResponse.json({ error: "Session not found" }, { status: 404 });
+  if (!session.quizPlan) {
+    const quizPlan = await generateQuizPlan(session).catch(() => ({
+      shouldQuiz: false as const,
+      reason: "Quiz generation failed; continuing without a checkpoint.",
+      primitives: [],
+    }));
+    session = id ? await setSessionQuizPlan(id, quizPlan) ?? session : { ...session, quizPlan };
+  }
+  const { diff: _diff, ...clientSession } = session;
+  return NextResponse.json(clientSession);
 }
 
 export async function POST(request: NextRequest) {

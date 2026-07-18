@@ -1,13 +1,15 @@
 # PR Review Room
 
-A local, web-only pre-push checkpoint for understanding a change before opening its pull request. The Git hook opens a minimal Next.js review room; there is no terminal quiz.
+A local, web-only pre-push checkpoint for understanding a change before opening its pull request. The Git hook opens a minimal Next.js quiz; there is no terminal quiz.
 
-The flow has four steps:
+The pushed diff is sent to Grok 4.5. The model decides whether the change merits a quiz, selects only the useful primitives, and supplies their content through a Zod-validated Structured Output. Available primitives are:
 
-1. Rebuild the changed system path in **Flow Fixer**.
-2. Replay commits and inspect the final behavioral/semantic diff in **Before / After**.
-3. Learn service ownership in **Service Shuffle**.
-4. Write the PR description and revise it against model feedback until it is ready.
+1. Reorder a changed system flow.
+2. Replay behavioral changes across commits.
+3. Recall component or service ownership with cards.
+4. Teach the change back in a PR draft.
+
+The model may return any subset in any order. Trivial changes and generation failures return no primitives and allow the push to continue. The raw diff is used server-side for generation and is not returned to the browser.
 
 ## Setup
 
@@ -38,19 +40,19 @@ PR_QUIZ_BYPASS=1 git push
 
 ## Grok 4.5 feedback
 
-Set `XAI_API_KEY` to judge PR-description revisions with Grok 4.5 through xAI's Responses API. The model receives only the session summary (commits, changed-file paths, system flow, semantic diff) and the submitted draft—not full repository contents. Requests set `store: false`, so xAI is not asked to retain the review response.
+Set `XAI_API_KEY` to generate quizzes and judge PR-description revisions with Grok 4.5 through xAI's Responses API. Quiz generation receives the pushed diff; draft review receives the validated quiz plan and submitted draft. Requests set `store: false`.
 
 ```sh
 XAI_API_KEY=... bun run dev
 ```
 
-The default model is `grok-4.5`; use `XAI_MODEL` to override it. Without a key, the same endpoint uses a small local rubric so the complete interaction remains testable.
+The default model is `grok-4.5`; use `XAI_MODEL` to override it. Without a key, quiz generation is unavailable and the hook fails open.
 
 ## Keyboard
 
-- `1`—`4`: jump between steps
-- `←` / `→`: move between steps or commits
-- `space`: flip a service card
+- number keys: choose a card, commit, or service in the active primitive
+- `Ctrl` / `⌘` + `Z`: undo or move back within the active primitive
+- `space`: flip the active service card
 - `⌘` + `enter`: judge a PR-description revision
 
 ## Validate

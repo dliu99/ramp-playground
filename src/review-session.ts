@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { displayRef, shortSha, ZERO_SHA, type RefUpdate } from "./refs";
+import type { QuizPlan } from "./quiz-plan";
 
 export type SessionStatus = "pending" | "approved" | "cancelled";
 
@@ -18,9 +19,8 @@ export interface ReviewSession {
   remoteUrl?: string;
   commits: ReviewCommit[];
   changedFiles: string[];
-  flow: Array<{ id: string; label: string; detail: string }>;
-  services: Array<{ name: string; path: string; responsibility: string }>;
-  behavioralDiff: Array<{ before: string; after: string }>;
+  diff?: string;
+  quizPlan?: QuizPlan;
   createdAt: string;
 }
 
@@ -62,23 +62,7 @@ export function createReviewSession(update: RefUpdate): ReviewSession {
     remoteUrl,
     commits: commits.length ? commits : [{ sha: shortSha(update.localSha), title: "Working branch", author: "you" }],
     changedFiles,
-    flow: [
-      { id: "admin", label: "Admin UI", detail: "opens one employee card" },
-      { id: "cards", label: "Cards API", detail: "validates category input" },
-      { id: "store", label: "Card rules", detail: "stores rule with card ID" },
-      { id: "policy", label: "Policy engine", detail: "checks card + category" },
-    ],
-    services: [
-      { name: "Admin UI", path: "apps/admin", responsibility: "Chooses a card and merchant categories" },
-      { name: "Cards API", path: "services/cards", responsibility: "Validates and persists card-scoped rules" },
-      { name: "Card rules", path: "card_category_rules", responsibility: "Keys category policy by card ID" },
-      { name: "Policy engine", path: "services/policy", responsibility: "Evaluates card and category together" },
-    ],
-    behavioralDiff: [
-      { before: "Admin creates a category rule", after: "Admin opens one employee card" },
-      { before: "Rule applies to the company card program", after: "Rule is stored with that card's ID" },
-      { before: "Policy engine checks category", after: "Policy engine checks card + category" },
-    ],
+    diff: git(["diff", "--unified=3", base, update.localSha])?.slice(0, 40_000),
     createdAt: new Date().toISOString(),
   };
 }
